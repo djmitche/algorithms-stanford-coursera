@@ -11,7 +11,7 @@ extern crate test;
 
 use std::iter;
 use std::ptr;
-use std::slice;
+use std::ops;
 
 pub trait Mergesort {
     fn mergesort(&mut self);
@@ -62,7 +62,7 @@ enum Merge<'a, T>
 where T: Ord
 {
     Join(Join<'a, T>),
-    Iter(slice::Iter<'a, usize>),
+    Iter(ops::Range<usize>),
 }
 
 impl<'a, T> Iterator for Merge<'a, T>
@@ -73,29 +73,26 @@ where T:Ord
     fn next(&mut self) -> Option<usize> {
         match self {
             Merge::Join(ref mut iter) => iter.next(),
-            Merge::Iter(ref mut iter) => match iter.next() {
-                None => None,
-                Some(&idx) => Some(idx),
-            },
+            Merge::Iter(ref mut iter) => iter.next(),
         }
     }
 }
 
 /// Construct an iterator that will iterate over indexes in the range `indexes`
 /// in order by the values they reference in data.
-fn merge<'a, T>(data: &'a [T], indexes: &'a [usize]) -> Merge<'a, T>
+fn merge<'a, T>(data: &'a [T], indexes: ops::Range<usize>) -> Merge<'a, T>
 where T: Ord
 {
-    let len = indexes.len();
+    let len = indexes.end - indexes.start;
     if len <= 1 {
-        Merge::Iter(indexes.iter())
+        Merge::Iter(indexes)
     } else {
-        let midpoint = len / 2;
+        let midpoint = indexes.start + len / 2;
 
         Merge::Join(Join {
             data,
-            left: Box::new(merge(data, &indexes[..midpoint]).peekable()),
-            right: Box::new(merge(data, &indexes[midpoint..]).peekable()),
+            left: Box::new(merge(data, indexes.start..midpoint).peekable()),
+            right: Box::new(merge(data, midpoint..indexes.end).peekable()),
         })
     }
 }
@@ -127,8 +124,7 @@ where T: Ord {
     fn mergesort(&mut self) {
         // sort into a list of indexes, allowing the many moves to apply only to usize values,
         // and not to the data being sorted
-        let indexes: Vec<usize> = (0..self.len()).collect();
-        let indexes: Vec<usize> = merge(self, &indexes[..]).collect();
+        let indexes: Vec<usize> = merge(self, 0..self.len()).collect();
 
         // apply the reordering we've constructed
         unsafe {
