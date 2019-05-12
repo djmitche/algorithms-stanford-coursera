@@ -4,116 +4,69 @@ extern crate test;
 // Rust makes it hard to
 //  * generate "scratch space" full of T's.
 //  * not move too many times
+//  * solution for T: Copy is easy; T: Clone is harder, arbitrary T...?
+//
+// TODO:
+//  * parallelize with a thread pool?
+//  * unsafe approach to move T's out of the way and back (uninitialized?)
 
 pub trait Mergesort {
     fn mergesort(&mut self);
 }
 
-struct Merge<'a, T>
+/// Sort the indexes for data, without actually moving the data
+fn mergesort<T>(data: &[T], indexes: &mut [usize], scratch: &mut [usize])
 where T: Ord {
-    elements: &'a [T],
-
-    left: Box<Iter<'a, T>>,
-    left_cache: Option<usize>,
-
-    right: Box<Iter<'a, T>>,
-    right_cache: Option<usize>,
-}
-
-enum Iter<'a, T>
-where T: Ord {
-    None,
-    Singleton(&'a [T], usize),
-    Merge(Merge<'a, T>),
-}
-
-enum Take {
-    Left,
-    Right,
-    Neither,
-}
-
-impl<'a, T> Iterator for Iter<'a, T>
-where T: Ord {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<usize> {
-        match self {
-            &mut Iter::None => None,
-            &mut Iter::Singleton(_, i) => {
-                *self = Iter::None;
-                Some(i)
-            },
-            &mut Iter::Merge(ref mut merge) => {
-                if merge.left_cache.is_none() {
-                    merge.left_cache = merge.left.next();
-                }
-                if merge.right_cache.is_none() {
-                    merge.right_cache = merge.right.next();
-                }
-
-                let take = match merge.left_cache {
-                    Some(l) => match merge.right_cache {
-                        Some(r) if merge.elements[l] < merge.elements[r] => Take::Left,
-                        Some(_) => Take::Right,
-                        None => Take::Left,
-                    },
-                    None => match merge.right_cache {
-                        Some(_) => Take::Right,
-                        None => Take::Neither,
-                    },
-                };
-
-                match take {
-                    Take::Left => {
-                        let rv = merge.left_cache;
-                        merge.left_cache = None;
-                        rv
-                    },
-                    Take::Right => {
-                        let rv = merge.right_cache;
-                        merge.right_cache = None;
-                        rv
-                    },
-                    Take::Neither => None,
-                }
-            }
-        }
+    let len = indexes.len();
+    if len <= 1 {
+        return
     }
-}
 
-/// Sort the values in `self`, using scratch space of the same length.
-fn index_iter<'a, T>(input: &'a [T], left: usize, right: usize) -> Iter<'a, T>
-where T: Ord {
-    let len = right - left;
+    assert_eq!(len, scratch.len());
+    let midpoint = len / 2;
+    mergesort(data, &mut indexes[..midpoint], &mut scratch[..midpoint]);
+    mergesort(data, &mut indexes[midpoint..], &mut scratch[midpoint..]);
 
-    match len {
-        0 => Iter::None,
-        1 => Iter::Singleton(input, left),
-        _ => {
-            let midpoint = left + len / 2;
-
-            Iter::Merge(
-                Merge {
-                    elements: input,
-                    left: Box::new(index_iter(input, left, midpoint)),
-                    left_cache: None,
-                    right: Box::new(index_iter(input, midpoint, right)),
-                    right_cache: None,
-                }
-            )
+    let mut i = 0;
+    let mut j = midpoint;
+    let mut r = 0;
+    while i < midpoint && j < len {
+        if data[indexes[i]] < data[indexes[j]] {
+            scratch[r] = indexes[i];
+            i += 1;
+        } else {
+            scratch[r] = indexes[j];
+            j += 1;
         }
+        r += 1;
+    }
+
+    while i < midpoint {
+        scratch[r] = indexes[i];
+        i += 1;
+        r += 1;
+    }
+
+    // we just don't bother copying items [j..] into scratch, instead leaving
+    // them in place in indexes
+    for i in 0..j {
+        indexes[i] = scratch[i];
     }
 }
 
 impl<T> Mergesort for [T]
 where T: Ord + Copy {
     fn mergesort(&mut self) {
+        // we'll sort this data by index first, to avoid too many copies
+        let mut indexes: Vec<usize> = (0..self.len()).collect();
+        let mut scratch: Vec<usize> = std::iter::repeat(0).take(self.len()).collect();
+        mergesort(self, &mut indexes, &mut scratch);
+
         // make a copy of the input as a source, so we can write
         // directly back to the output
         let copy: Vec<T> = self.iter().map(|e| *e).collect();
-        for (i, j) in index_iter(&copy[..], 0, copy.len()).enumerate() {
-            self[i] = copy[j];
+        for i in 0..self.len() {
+            self[i] = copy[indexes[i]];
         }
     }
 }
