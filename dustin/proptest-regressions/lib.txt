@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 2e3fc1d9fd3cd0f6e482cdbb411863a1744926db87577bb76fe917bcd37e2de8 # shrinks to v = [4662593586761215023, 0]
 cc 200648217b096d21b9effe4047e6fd6c7183852157214394996c32d91823fec0 # shrinks to v = [12655078692808278397, 0]
+cc 1e2ec8f92dd36297fef08205d47df63020a102976a3a714b69f195fb527582dd # shrinks to v = []

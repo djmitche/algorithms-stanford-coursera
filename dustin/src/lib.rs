@@ -8,7 +8,10 @@ extern crate test;
 //
 // TODO:
 //  * parallelize with a thread pool?
-//  * unsafe approach to move T's out of the way and back (uninitialized?)
+
+use std::iter;
+use std::mem;
+use std::ptr;
 
 pub trait Mergesort {
     fn mergesort(&mut self);
@@ -49,24 +52,47 @@ where T: Ord {
 
     // we just don't bother copying items [j..] into scratch, instead leaving
     // them in place in indexes
+
     for i in 0..j {
         indexes[i] = scratch[i];
     }
 }
 
-impl<T> Mergesort for [T]
-where T: Ord + Copy {
-    fn mergesort(&mut self) {
-        // we'll sort this data by index first, to avoid too many copies
-        let mut indexes: Vec<usize> = (0..self.len()).collect();
-        let mut scratch: Vec<usize> = std::iter::repeat(0).take(self.len()).collect();
-        mergesort(self, &mut indexes, &mut scratch);
+/// Reorder the elements in `data` according to `indexes.  The two must have the same size
+/// and indexes must be a one-to-one mapping from 0..len to 0..len.  Failure of either of
+/// these invariants will cause undefined behavior.
+unsafe fn reorder<T>(data: &mut [T], indexes: &[usize]) {
+    let len = data.len();
+    let mut scratch: Vec<T> = Vec::with_capacity(len);
+    scratch.set_len(len);
 
-        // make a copy of the input as a source, so we can write
-        // directly back to the output
-        let copy: Vec<T> = self.iter().map(|e| *e).collect();
-        for i in 0..self.len() {
-            self[i] = copy[indexes[i]];
+    // copy data -> scratch so we can use it as a source for copying back
+    ptr::copy_nonoverlapping(data.as_ptr(), scratch.as_mut_ptr(), len);
+
+    // copy scratch back to data, applying the index mapping so that elements end
+    // up in a sorted order
+    for i in 0..len {
+        ptr::copy_nonoverlapping(&scratch[indexes[i]], &mut data[i], 1);
+    }
+
+    // forget about all of the elements in `scratch` as they have been copied
+    // back to `data`
+    scratch.set_len(0);
+}
+
+impl<T> Mergesort for [T]
+where T: Ord {
+    fn mergesort(&mut self) {
+        // sort into a list of indexes, allowing the many moves to apply only to usize values,
+        // and not to the data being sorted
+        let mut indexes: Vec<usize> = (0..self.len()).collect();
+        let mut scratch: Vec<usize> = unsafe { iter::repeat(mem::uninitialized()).take(self.len()).collect() };
+        mergesort(self, &mut indexes, &mut scratch);
+        drop(scratch);
+
+        // apply the reordering we've constructed
+        unsafe {
+            reorder(self, &indexes[..]);
         }
     }
 }
@@ -81,7 +107,16 @@ mod tests {
 
     #[test]
     fn sort_vec() {
-        let v = vec![5, 4, 3, 2, 1];
+        let v = vec![5, 0, 1];
+        let (mut correct, mut mergesorted) = (v.clone(), v);
+        correct.sort();
+        mergesorted.mergesort();
+        assert_eq!(correct, mergesorted);
+    }
+
+    #[test]
+    fn sort_strings_simple() {
+        let v = vec!["ghi".to_string(), "def".to_string(), "abc".to_string()];
         let (mut correct, mut mergesorted) = (v.clone(), v);
         correct.sort();
         mergesorted.mergesort();
@@ -90,7 +125,15 @@ mod tests {
 
     proptest! {
         #[test]
-        fn sort_slices(v in collection::vec(num::u64::ANY, 0..1000)) {
+        fn sort_ints(v in collection::vec(num::u64::ANY, 0..1000)) {
+            let (mut correct, mut mergesorted) = (v.clone(), v);
+            correct.sort();
+            &mergesorted[..].mergesort();
+            assert_eq!(correct, mergesorted);
+        }
+
+        #[test]
+        fn sort_strings(v in collection::vec("[a-zA-Z]*", 0..100)) {
             let (mut correct, mut mergesorted) = (v.clone(), v);
             correct.sort();
             &mergesorted[..].mergesort();
