@@ -4,96 +4,57 @@ extern crate test;
 // Rust makes it hard to
 //  * generate "scratch space" full of T's.
 //  * not move too many times
-//  * solution for T: Copy is easy; T: Clone is harder, arbitrary T...? without unsafe?
+//  * solution for T: Copy is easy; T: Clone is harder, arbitrary T...?
 //
 // TODO:
 //  * parallelize with a thread pool?
 
 use std::iter;
+use std::mem;
 use std::ptr;
-use std::ops;
 
 pub trait Mergesort {
     fn mergesort(&mut self);
 }
 
-/// An iterator that picks indexes from two other iterators, based on which
-/// has the smaller value in data.
-struct Join<'a, T>
-where T: Ord
-{
-    data: &'a [T],
-    left: Box<iter::Peekable<Merge<'a, T>>>,
-    right: Box<iter::Peekable<Merge<'a, T>>>,
-}
-
-impl<'a, T> Iterator for Join<'a, T>
-where T: Ord
-{
-    type Item = usize;
-
-    fn next(&mut self) -> Option<usize> {
-        let left = self.left.peek();
-        let right = self.right.peek();
-
-        if let Some(l) = left {
-            if let Some(r) = right {
-                if self.data[*l] < self.data[*r] {
-                    self.left.next()
-                } else {
-                    self.right.next()
-                }
-            } else {
-                self.left.next()
-            }
-        } else {
-            if let Some(_) = right {
-                self.right.next()
-            } else {
-                None
-            }
-        }
-    }
-}
-
-/// Either a merge of two smaller chunks, or a simple iterator over a sequence of
-/// length 1 or 0.
-enum Merge<'a, T>
-where T: Ord
-{
-    Join(Join<'a, T>),
-    Iter(ops::Range<usize>),
-}
-
-impl<'a, T> Iterator for Merge<'a, T>
-where T:Ord
-{
-    type Item = usize;
-
-    fn next(&mut self) -> Option<usize> {
-        match self {
-            Merge::Join(ref mut iter) => iter.next(),
-            Merge::Iter(ref mut iter) => iter.next(),
-        }
-    }
-}
-
-/// Construct an iterator that will iterate over indexes in the range `indexes`
-/// in order by the values they reference in data.
-fn merge<'a, T>(data: &'a [T], indexes: ops::Range<usize>) -> Merge<'a, T>
-where T: Ord
-{
-    let len = indexes.end - indexes.start;
+/// Sort the indexes for data, without actually moving the data
+fn mergesort<T>(data: &[T], indexes: &mut [usize], scratch: &mut [usize])
+where T: Ord {
+    let len = indexes.len();
     if len <= 1 {
-        Merge::Iter(indexes)
-    } else {
-        let midpoint = indexes.start + len / 2;
+        return
+    }
 
-        Merge::Join(Join {
-            data,
-            left: Box::new(merge(data, indexes.start..midpoint).peekable()),
-            right: Box::new(merge(data, midpoint..indexes.end).peekable()),
-        })
+    assert_eq!(len, scratch.len());
+    let midpoint = len / 2;
+    mergesort(data, &mut indexes[..midpoint], &mut scratch[..midpoint]);
+    mergesort(data, &mut indexes[midpoint..], &mut scratch[midpoint..]);
+
+    let mut i = 0;
+    let mut j = midpoint;
+    let mut r = 0;
+    while i < midpoint && j < len {
+        if data[indexes[i]] < data[indexes[j]] {
+            scratch[r] = indexes[i];
+            i += 1;
+        } else {
+            scratch[r] = indexes[j];
+            j += 1;
+        }
+        r += 1;
+    }
+
+    while i < midpoint {
+        scratch[r] = indexes[i];
+        i += 1;
+        r += 1;
+    }
+
+    // we just don't bother copying items [j..] into scratch, instead leaving
+    // them in place in indexes
+
+    for i in 0..j {
+        indexes[i] = scratch[i];
     }
 }
 
@@ -124,7 +85,10 @@ where T: Ord {
     fn mergesort(&mut self) {
         // sort into a list of indexes, allowing the many moves to apply only to usize values,
         // and not to the data being sorted
-        let indexes: Vec<usize> = merge(self, 0..self.len()).collect();
+        let mut indexes: Vec<usize> = (0..self.len()).collect();
+        let mut scratch: Vec<usize> = unsafe { iter::repeat(mem::uninitialized()).take(self.len()).collect() };
+        mergesort(self, &mut indexes, &mut scratch);
+        drop(scratch);
 
         // apply the reordering we've constructed
         unsafe {
